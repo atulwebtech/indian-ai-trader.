@@ -1,5 +1,11 @@
-"""Local dashboard (Flask). Binds to 127.0.0.1 only. Read-only: no order controls, no secrets."""
+
+"""Local and cloud dashboard (Flask).
+Read-only: no order controls, no secrets.
+Supports Render deployment using 0.0.0.0 and PORT.
+"""
+
 import json
+import os
 import time
 from pathlib import Path
 
@@ -13,7 +19,12 @@ TEMPLATES = Path(__file__).parent / "templates"
 
 def create_app(settings, mode, **kw) -> Flask:
     app = Flask(__name__, template_folder=str(TEMPLATES))
-    option_state = Path(kw.pop("option_state_path", None) or (ROOT / "data" / "option_state.json"))
+
+    option_state = Path(
+        kw.pop("option_state_path", None)
+        or (ROOT / "data" / "option_state.json")
+    )
+
     state = DashboardState(settings, mode, **kw)
 
     @app.get("/")
@@ -32,17 +43,32 @@ def create_app(settings, mode, **kw) -> Flask:
 
     @app.get("/api/options")
     def api_options():
-        """Reads the file written by `./run.sh option-monitor --live`. Read-only; shows MONITOR NOT RUNNING when it is missing or old."""
+        """Read-only option monitor status."""
+
         try:
             st = json.loads(option_state.read_text())
         except (OSError, ValueError):
-            resp = jsonify({"available": False, "message": "Monitor not running. Start it with: ./run.sh option-monitor --live"})
+            resp = jsonify({
+                "available": False,
+                "message": (
+                    "Monitor not running. "
+                    "Start it with: ./run.sh option-monitor --live"
+                )
+            })
             resp.headers["Cache-Control"] = "no-store"
             return resp
+
         age = time.time() - float(st.get("updated_epoch", 0))
-        st.update(available=True, age_seconds=round(age, 1), monitor_stale=age > 15)
+
+        st.update(
+            available=True,
+            age_seconds=round(age, 1),
+            monitor_stale=age > 15
+        )
+
         resp = jsonify(st)
         resp.headers["Cache-Control"] = "no-store"
+
         return resp
 
     @app.get("/healthz")
@@ -52,7 +78,20 @@ def create_app(settings, mode, **kw) -> Flask:
     return app
 
 
-def run_dashboard(settings, mode, port=8050):
+def run_dashboard(settings, mode, port=None):
+    """Start Flask dashboard locally or on Render."""
+
+    # Render automatically supplies PORT.
+    # Local development defaults to port 8050.
+    port = int(port or os.environ.get("PORT", 8050))
+
     app = create_app(settings, mode)
-    print(f"Dashboard: http://127.0.0.1:{port}   (Ctrl+C to stop; only this computer can open it)")
-    app.run(host="127.0.0.1", port=port, debug=False)
+
+    print(f"Dashboard listening on 0.0.0.0:{port}")
+
+    app.run(
+        host="0.0.0.0",
+        port=port,
+        debug=False,
+        use_reloader=False
+    )
