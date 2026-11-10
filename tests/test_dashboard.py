@@ -78,7 +78,23 @@ def test_flask_routes_and_localhost_only(tmp_path):
     assert api.status_code == 200 and api.headers["Cache-Control"] == "no-store"
     assert c.get("/healthz").json == {"ok": True}
     import inspect, dashboard.app as mod
-    assert 'host="127.0.0.1"' in inspect.getsource(mod.run_dashboard)
+    src = inspect.getsource(mod.run_dashboard)
+    assert "127.0.0.1" in src and "RENDER" in src          # local only unless on Render or asked
+    assert "Refusing to open the dashboard to the internet without DASHBOARD_PASSWORD" in src
+
+
+def test_public_dashboard_needs_password(tmp_path, monkeypatch):
+    import base64, pytest, dashboard.app as mod
+    st, s = make(tmp_path)
+    monkeypatch.setenv("DASHBOARD_HOST", "0.0.0.0")
+    monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+    with pytest.raises(SystemExit):
+        mod.run_dashboard(s, "MOCK")
+    app = mod.add_password(create_app(s, "MOCK", loader=loader, clock=lambda: NOW, state_dir=tmp_path, ttl=0, telegram_client=FakeTG()), "pw")
+    c = app.test_client()
+    auth = {"Authorization": "Basic " + base64.b64encode(b"admin:pw").decode()}
+    assert c.get("/").status_code == 401 and c.get("/", headers=auth).status_code == 200
+    assert c.get("/healthz").status_code == 200
 
 
 def test_paper_history_and_report(tmp_path):

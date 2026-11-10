@@ -78,20 +78,37 @@ def create_app(settings, mode, **kw) -> Flask:
     return app
 
 
+def add_password(app, password: str, user: str = "admin"):
+    """HTTP Basic auth on every page except /healthz (used by uptime pingers)."""
+    import hmac
+    from flask import Response, request
+
+    @app.before_request
+    def _check():
+        if request.path == "/healthz":
+            return None
+        a = request.authorization
+        if a and hmac.compare_digest(a.username or "", user) and hmac.compare_digest(a.password or "", password):
+            return None
+        return Response("Password required", 401, {"WWW-Authenticate": 'Basic realm="Indian AI Trader"'})
+    return app
+
+
 def run_dashboard(settings, mode, port=None):
-    """Start Flask dashboard locally or on Render."""
-
-    # Render automatically supplies PORT.
-    # Local development defaults to port 8050.
-    port = int(port or os.environ.get("PORT", 8050))
-
+    """Start the dashboard locally (127.0.0.1:8050) or on Render (0.0.0.0:$PORT, password protected).
+    Render is detected from its RENDER env var; DASHBOARD_HOST overrides."""
+    on_render = bool(os.getenv("RENDER"))
+    host = os.getenv("DASHBOARD_HOST", "0.0.0.0" if on_render else "127.0.0.1")
+    port = int(port or os.getenv("PORT", 8050))
+    password = os.getenv("DASHBOARD_PASSWORD", "")
     app = create_app(settings, mode)
-
-    print(f"Dashboard listening on 0.0.0.0:{port}")
-
-    app.run(
-        host="0.0.0.0",
-        port=port,
-        debug=False,
-        use_reloader=False
-    )
+    if host != "127.0.0.1":
+        if not password:
+            raise SystemExit("Refusing to open the dashboard to the internet without DASHBOARD_PASSWORD. Set it, then restart.")
+        add_password(app, password, os.getenv("DASHBOARD_USER", "admin"))
+        print(f"Dashboard listening on {host}:{port} (password protected)")
+    else:
+        if password:
+            add_password(app, password, os.getenv("DASHBOARD_USER", "admin"))
+        print(f"Dashboard: http://127.0.0.1:{port}   (Ctrl+C to stop; only this computer can open it)")
+    app.run(host=host, port=port, debug=False, use_reloader=False)
