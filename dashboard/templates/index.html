@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Indian AI Trader - Dashboard</title>
+<style>
+  :root { --bg:#0f1419; --card:#1a212b; --text:#e6e9ee; --mut:#8b97a7; --line:#2b3544;
+          --mock:#b57edc; --hist:#e0a030; --live:#3cb371; --fc:#4aa3ff; --bad:#e5534b; --ok:#3cb371; }
+  * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,sans-serif; }
+  header { padding:12px 16px; border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  h1 { font-size:18px; margin:0 12px 0 0; } main { padding:16px; max-width:1200px; margin:auto; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:12px; font-weight:600; border:1px solid currentColor; }
+  .MOCK{color:var(--mock)} .HISTORICAL{color:var(--hist)} .LIVE{color:var(--live)} .FORECAST{color:var(--fc)}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .mut{color:var(--mut)}
+  .warn { background:#3a2a10; border:1px solid #7a5a1a; padding:8px 12px; border-radius:6px; margin-bottom:12px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px; }
+  .card h2 { font-size:16px; margin:0 0 8px; display:flex; justify-content:space-between; gap:8px; align-items:center; }
+  .price { font-size:26px; font-weight:700; } table { width:100%; border-collapse:collapse; margin:6px 0; }
+  td,th { text-align:left; padding:3px 6px; border-bottom:1px solid var(--line); font-size:13px; } th { color:var(--mut); font-weight:600; }
+  h3 { font-size:13px; color:var(--mut); margin:12px 0 4px; text-transform:uppercase; letter-spacing:.04em; }
+  canvas { width:100%; height:150px; background:#141a22; border-radius:6px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; } .pill { padding:1px 7px; border-radius:4px; background:#26303d; }
+  footer { color:var(--mut); font-size:12px; padding:14px 16px; text-align:center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Indian AI Trader</h1>
+  <span id="mode" class="badge"></span>
+  <span class="badge bad">ORDERS DISABLED</span>
+  <span id="market" class="mut"></span>
+  <span id="stamp" class="mut" style="margin-left:auto"></span>
+</header>
+<main>
+  <div class="warn" id="warn"></div>
+  <div class="row" style="margin-bottom:12px" id="conn"></div>
+  <div class="grid" id="cards"></div>
+  <h3>Signal history &amp; paper trading</h3>
+  <div class="card" id="paper"></div>
+  <p class="mut">Data kinds: <span class="badge MOCK">MOCK</span> invented test data &nbsp;
+     <span class="badge HISTORICAL">HISTORICAL</span> delayed past candles &nbsp;
+     <span class="badge LIVE">LIVE</span> Groww feed &nbsp;
+     <span class="badge FORECAST">FORECAST</span> model estimate, not a fact</p>
+</main>
+<footer>Forecasts are conditional estimates, not predictions or advice. No target is guaranteed. Page refreshes every 60 s.</footer>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmt = (x) => x == null ? "-" : Number(x).toLocaleString("en-IN", {maximumFractionDigits: 0});
+const cls = (st) => ({CONNECTED:"ok", CONFIGURED:"ok"}[st] || (st === "ERROR" ? "bad" : "mut"));
+
+function draw(canvas, chart, lines) {
+  const w = canvas.width = canvas.clientWidth * 2, h = canvas.height = 300, c = canvas.getContext("2d");
+  const vals = chart.close.concat(lines.map(l => l.v).filter(v => v != null));
+  const lo = Math.min(...vals), hi = Math.max(...vals), pad = (hi - lo) * 0.05 || 1;
+  const y = (v) => h - 20 - (v - (lo - pad)) / ((hi - lo) + 2 * pad) * (h - 40);
+  c.font = "20px sans-serif";
+  lines.forEach(l => { if (l.v == null) return; c.strokeStyle = l.color; c.setLineDash([8, 6]); c.beginPath();
+    c.moveTo(0, y(l.v)); c.lineTo(w, y(l.v)); c.stroke(); c.fillStyle = l.color; c.fillText(l.t + " " + fmt(l.v), 6, y(l.v) - 4); });
+  c.setLineDash([]); c.strokeStyle = "#e6e9ee"; c.lineWidth = 3; c.beginPath();
+  chart.close.forEach((v, i) => { const x = i / (chart.close.length - 1) * w; i ? c.lineTo(x, y(v)) : c.moveTo(x, y(v)); }); c.stroke();
+}
+
+function tgt(ts) { return ts.map(t => `<tr><td>${esc(t.label)}</td><td><b>${fmt(t.level)}</b></td><td class="mut">${fmt(t.zone_low)} - ${fmt(t.zone_high)}</td>` +
+  `<td class="mut">${t.historical_reach_rate == null ? "" : Math.round(t.historical_reach_rate * 100) + "% of past days"}</td></tr>`).join(""); }
+
+function card(i) {
+  const b = i.bias, f = i.freshness, s = i.signal_now, sc = i.scenarios, o = i.opening_range;
+  const biasCls = b.bias === "BULLISH" ? "ok" : b.bias === "BEARISH" ? "bad" : "mut";
+  return `<div class="card"><h2>${esc(i.name)} <span class="badge ${esc(i.data_source_key)}">${esc(i.data_source)}</span></h2>
+  <div class="price">${Number(i.price).toLocaleString("en-IN", {minimumFractionDigits: 2})}</div>
+  <div class="mut">${esc(i.price_note)} | candle ended ${esc(f.last_candle_end)} | data <b class="${f.status === "FRESH" ? "ok" : f.status === "STALE" ? "bad" : "mut"}">${esc(f.status)}</b> (market ${esc(f.market)})</div>
+  <h3>Direction <span class="badge FORECAST">FORECAST</span></h3>
+  <div><b class="${biasCls}">${esc(b.bias)}</b> <span class="mut">score ${b.score >= 0 ? "+" : ""}${b.score}/${b.of}, conviction ${esc(b.conviction.toLowerCase())}</span></div>
+  <canvas id="ch-${esc(i.name)}"></canvas>
+  <h3>Upside targets <span class="pill">${esc(sc.bullish.role.toLowerCase())}</span> <span class="badge FORECAST">FORECAST</span></h3>
+  <table>${tgt(sc.bullish.targets)}</table><div class="mut">${esc(sc.bullish.trigger)}<br>${esc(sc.bullish.invalidation)}</div>
+  <h3>Downside targets <span class="pill">${esc(sc.bearish.role.toLowerCase())}</span> <span class="badge FORECAST">FORECAST</span></h3>
+  <table>${tgt(sc.bearish.targets)}</table><div class="mut">${esc(sc.bearish.trigger)}<br>${esc(sc.bearish.invalidation)}</div>
+  <h3>Sideways <span class="pill">${esc(sc.sideways.role.toLowerCase())}</span></h3>
+  <div class="mut">${fmt(sc.sideways.range[0])} - ${fmt(sc.sideways.range[1])}. ${esc(sc.sideways.invalidation)}</div>
+  <h3>Support / resistance</h3><div>Support <b>${fmt(i.support)}</b> | Resistance <b>${fmt(i.resistance)}</b></div>
+  <h3>Reversal zones (need confirmation)</h3>
+  <table>${i.reversal_zones.map(z => `<tr><td>${z.type === "POTENTIAL_TOP" ? "Top" : "Bottom"}</td><td><b>${fmt(z.zone[0])} - ${fmt(z.zone[1])}</b></td><td class="mut">${esc(z.needs[1])}</td></tr>`).join("")}</table>
+  <div class="mut">Right now: ${esc(i.reversal_now.state.replaceAll("_", " ").toLowerCase())}${i.reversal_now.still_needed.length ? " - missing: " + esc(i.reversal_now.still_needed.join(", ")) : ""}</div>
+  <h3>Opening range / volatility</h3>
+  <div class="mut">${o.status === "COMPLETE" ? `Range ${fmt(o.or_low)} - ${fmt(o.or_high)}, price ${esc(o.price_vs_range.toLowerCase())} it` : "Opening range not available yet"}<br>
+  Daily ATR ${fmt(i.volatility.daily_atr)} | expected rest-of-day range ${fmt(i.volatility.expected_range_low)} - ${fmt(i.volatility.expected_range_high)} | ${esc(i.volatility.range_state.toLowerCase())}${i.volume_available ? "" : " | volume unavailable (spot index)"}</div>
+  <h3>Active signal check</h3>
+  <div><b>${esc(s.action)}</b> <span class="mut">${esc(s.reasons.join("; "))}</span></div>
+  ${s.action === "BUY" || s.action === "SELL" ? `<div class="mut">Entry ${fmt(s.entry_zone[0])}-${fmt(s.entry_zone[1])}, stop ${fmt(s.stop)}, targets ${s.targets.map(fmt).join(" / ")}, score ${s.score} (not a win chance)</div>` : ""}
+  </div>`;
+}
+
+async function load() {
+  try {
+    const d = await (await fetch("/api/state")).json();
+    $("mode").textContent = d.mode_label; $("mode").className = "badge " + d.data_mode;
+    $("stamp").textContent = d.generated_at;
+    const m = d.market;
+    $("market").textContent = `${m.today}: ${m.type}${m.holiday ? " (" + m.holiday + ")" : ""}${m.calendar_verified ? "" : " - holiday list does not cover this year (UNVERIFIED)"}`;
+    $("warn").textContent = d.backtest_warning;
+    $("conn").innerHTML = `<span>Telegram: <b class="${cls(d.telegram.state)}">${esc(d.telegram.state)}</b> <span class="mut">${esc(d.telegram.detail)}</span></span>
+      <span>Groww: <b class="${cls(d.groww.state)}">${esc(d.groww.state)}</b> <span class="mut">${esc(d.groww.detail)}</span></span>` +
+      (d.errors.length ? `<span class="bad">Errors: ${esc(d.errors.join(" | "))}</span>` : "");
+    $("cards").innerHTML = d.instruments.map(card).join("");
+    d.instruments.forEach(i => draw($("ch-" + i.name), i.chart, [
+      {v: i.support, color: "#3cb371", t: "S"}, {v: i.resistance, color: "#e5534b", t: "R"},
+      {v: i.scenarios.bullish.targets[0]?.level, color: "#4aa3ff", t: "T1up"}, {v: i.scenarios.bearish.targets[0]?.level, color: "#b57edc", t: "T1dn"}]));
+    const p = d.paper, s = p.summary;
+    $("paper").innerHTML = (s.trades ? `<div>Closed paper trades: <b>${s.trades}</b> | win rate ${Math.round(s.win_rate * 100)}% | total <b>${s.total.toFixed(2)}R</b> | max drawdown ${s.max_drawdown.toFixed(2)}R | max consecutive losses ${s.max_consecutive_losses} <span class="mut">(before costs)</span></div>`
+      : `<div class="mut">No closed paper trades yet. Signals appear here when the Telegram bot is running.</div>`) +
+      `<table><tr><th>Time</th><th>Instrument</th><th>Action</th><th>Setup</th><th>Entry</th><th>Stop</th><th>Status</th><th>R</th></tr>` +
+      p.history.map(h => `<tr><td>${esc(h.time)}</td><td>${esc(h.instrument)}</td><td>${esc(h.action)}</td><td>${esc(h.setup)}</td><td>${fmt(h.entry)}</td><td>${fmt(h.stop)}</td><td>${esc(h.status)}</td><td>${h.r == null ? "" : h.r.toFixed(2)}</td></tr>`).join("") + `</table>`;
+  } catch (e) { $("warn").textContent = "Could not load data: " + e; }
+}
+load(); setInterval(load, 60000);
+</script>
+</body>
+</html>

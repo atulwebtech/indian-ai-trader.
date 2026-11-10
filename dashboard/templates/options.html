@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Option Signal Terminal (PAPER)</title>
+<style>
+:root{--bg:#0b0f14;--panel:#121923;--panel2:#18212e;--line:#243044;--tx:#d7e0ee;--mut:#8394ad;--g:#22c55e;--r:#ef4444;--y:#eab308;--gr:#64748b;--b:#38bdf8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif}
+header{position:sticky;top:0;z-index:5;background:#0e141d;border-bottom:1px solid var(--line);padding:10px 16px;display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
+header h1{font-size:16px;margin:0}
+.pill{padding:2px 9px;border-radius:99px;font-size:12px;font-weight:700;border:1px solid transparent;white-space:nowrap}
+.bull{background:#06301a;color:var(--g);border-color:#0f5a30}.bear{background:#3a0d0d;color:var(--r);border-color:#6b1c1c}
+.wait{background:#3a2e05;color:var(--y);border-color:#6b5810}.neu{background:#1c2432;color:#a9b6cc;border-color:#2f3d55}
+.blue{background:#07283a;color:var(--b);border-color:#0f4a6b}
+main{padding:14px 16px;max-width:1500px;margin:0 auto}
+.warn{background:#3a2e05;border:1px solid #6b5810;color:var(--y);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-weight:600}
+.grid{display:grid;gap:12px}.g2{grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}.g3{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;min-width:0}
+.card h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin:0 0 8px}
+.big{font-size:26px;font-weight:700}.mut{color:var(--mut)}.up{color:var(--g)}.dn{color:var(--r)}.ye{color:var(--y)}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:4px 6px;text-align:right;border-bottom:1px solid #1b2535;white-space:nowrap}
+th{color:var(--mut);font-weight:600}td:first-child,th:first-child{text-align:left}
+tr.atm td{background:#10304a;font-weight:700}
+.scroll{overflow-x:auto}
+.dec{border-width:2px}.dec.bull{border-color:#0f5a30}.dec.bear{border-color:#6b1c1c}.dec.wait{border-color:#6b5810}.dec.neu{border-color:#2f3d55}
+.dec .act{font-size:28px;font-weight:800}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px}.kv div:nth-child(odd){color:var(--mut)}
+ul{margin:4px 0 0 18px;padding:0}li{margin:2px 0}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.bar{height:8px;border-radius:5px;background:#1c2432;overflow:hidden}.bar>i{display:block;height:100%}
+svg{width:100%;height:60px;display:block}
+.sec{margin:18px 0 6px;font-size:13px;color:var(--mut);letter-spacing:.1em;text-transform:uppercase}
+.best{outline:2px solid var(--b)}
+footer{color:var(--mut);font-size:12px;padding:16px;text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <h1>Option Signal Terminal</h1>
+  <span class="pill blue">PAPER SIGNALS - NO REAL ORDERS</span>
+  <span id="conn" class="pill neu">connecting...</span>
+  <span id="lat" class="mut"></span>
+  <span id="clock" class="mut" style="margin-left:auto"></span>
+</header>
+<main>
+  <div id="banner"></div>
+  <div class="sec">Live market</div><div id="cards" class="grid g2"></div>
+  <div id="insts"></div>
+  <div class="sec">Paper performance (only signals whose entry triggered are counted)</div>
+  <div id="perf" class="grid g3"></div>
+  <div class="sec">Signal history</div>
+  <div class="card scroll"><table id="hist"></table></div>
+</main>
+<footer>Quality score is a strategy-quality rating, not a probability of profit. Premium stop/targets are estimates from delta and gamma. This page only reads data; it has no order controls.</footer>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const n = (x, d = 2) => (x === null || x === undefined || Number.isNaN(x)) ? 'n/a' : (typeof x === 'number' ? x.toLocaleString('en-IN', {maximumFractionDigits: d}) : esc(x));
+const cls = (v) => ({BULLISH:'bull', UP:'bull', BUY_CALL:'bull', 'BUY CALL':'bull', BEARISH:'bear', DOWN:'bear', 'BUY PUT':'bear',
+  'WAIT FOR CONFIRMATION':'wait', WAITING:'wait', 'WAITING FOR ENTRY':'wait', READY:'bull', NEUTRAL:'neu', SIDEWAYS:'neu', 'NO TRADE':'neu'}[v] || 'neu');
+const pill = (t, c) => `<span class="pill ${c || cls(t)}">${esc(t)}</span>`;
+const sign = (x) => x > 0 ? 'up' : x < 0 ? 'dn' : '';
+
+function spark(vals, levels) {
+  if (!vals || vals.length < 2) return '';
+  const lo = Math.min(...vals), hi = Math.max(...vals), W = 300, H = 60, rng = (hi - lo) || 1;
+  const pts = vals.map((v, i) => `${(i / (vals.length - 1) * W).toFixed(1)},${(H - 4 - (v - lo) / rng * (H - 8)).toFixed(1)}`).join(' ');
+  const col = vals[vals.length - 1] >= vals[0] ? '#22c55e' : '#ef4444';
+  let lines = '';
+  for (const [k, v] of Object.entries(levels || {})) {
+    if (['PDH', 'PDL', 'OR_HIGH', 'OR_LOW'].includes(k) && v >= lo && v <= hi) {
+      const y = H - 4 - (v - lo) / rng * (H - 8);
+      lines += `<line x1="0" x2="${W}" y1="${y}" y2="${y}" stroke="#475569" stroke-dasharray="3 3"/><text x="2" y="${y - 2}" fill="#64748b" font-size="9">${k}</text>`;
+    }
+  }
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${lines}<polyline fill="none" stroke="${col}" stroke-width="1.8" points="${pts}"/></svg>`;
+}
+
+function trend(d) { // overall bias from timeframe votes
+  const m = d.mtf || {}; let b = 0, r = 0;
+  for (const k of ['30m', '15m', '5m', '3m']) { if (m[k] === 'BULLISH') b++; if (m[k] === 'BEARISH') r++; }
+  return b >= 3 ? 'BULLISH' : r >= 3 ? 'BEARISH' : 'SIDEWAYS';
+}
+
+function marketCard(name, d, st) {
+  if (!d) return `<div class="card"><h2>${name}</h2><span class="mut">no data yet</span></div>`;
+  const ch = d.change, i5 = (d.indicators || {})['5m'] || {};
+  const t = trend(d), data = d.data || {};
+  return `<div class="card"><h2>${name} ${pill(data.label || data.state || '?', data.state === 'LIVE' ? 'bull' : 'bear')}</h2>
+    <div class="big">${n(d.underlying_price)} ${ch ? `<span class="${sign(ch.abs)}" style="font-size:16px">${ch.abs > 0 ? '+' : ''}${n(ch.abs)} (${ch.pct > 0 ? '+' : ''}${ch.pct}%)</span>` : ''}</div>
+    <div class="chips" style="margin:6px 0">${pill('Trend ' + t)} ${pill('Regime ' + (typeof d.regime === 'string' ? d.regime : (d.regime && d.regime.regime) || 'n/a'), 'neu')}
+    ${d.stale_analysis ? pill('OLD ANALYSIS from ' + String(d.analysis_time || '').slice(11, 19), 'wait') : ''} ${pill('RSI ' + n(i5.rsi, 0), i5.rsi > 70 ? 'wait' : i5.rsi < 30 ? 'wait' : 'neu')}
+    ${pill('VWAP ' + (i5.vwap ? n(i5.vwap, 1) : 'n/a'), i5.vwap ? (d.underlying_price > i5.vwap ? 'bull' : 'bear') : 'neu')}</div>
+    ${spark(d.spark, d.levels)}
+    <div class="mut">Data time ${esc(data.data_time_ist || 'n/a')} IST | tick age ${n(data.tick_age_s)}s | latency ${n(data.latency_s)}s</div></div>`;
+}
+
+function decisionCard(name, d) {
+  if (!d) return '';
+  const a = d.action, c = a === 'BUY CALL' ? 'bull' : a === 'BUY PUT' ? 'bear' : a.startsWith('WAIT') ? 'wait' : 'neu';
+  let body = '';
+  if (a.startsWith('BUY')) {
+    const o = d.option, p = d.premium, u = d.underlying;
+    body = `<div class="kv"><div>Contract</div><div><b>${esc(o.symbol)}</b> (${o.type} ${n(o.strike, 0)}, exp ${esc(o.expiry)})</div>
+      <div>Underlying LTP</div><div>${n(d.underlying_price)}</div>
+      <div>Entry premium</div><div><b>${n(p.entry)}</b> (zone ${n(p.entry_zone[0])}-${n(p.entry_zone[1])})</div>
+      <div>Stop loss (premium)</div><div class="dn"><b>${n(p.stop)}</b></div>
+      ${p.targets.map((t, i) => `<div>Target ${i + 1}</div><div class="up"><b>${n(t.premium)}</b> (RR ${t.rr})</div>`).join('')}
+      <div>Underlying levels</div><div>entry ${n(u.entry)} | SL ${n(u.stop)} | ${u.targets.map((t, i) => 'T' + (i + 1) + ' ' + n(t.level)).join(' | ')}</div>
+      <div>Size</div><div>${p.lots} lot x ${p.lot_size} = ${p.quantity} qty | max loss Rs ${n(p.max_loss_rupees, 0)} | cost Rs ${n(p.premium_cost_rupees, 0)}</div>
+      <div>Score</div><div><b>${n(d.score, 1)}</b>/100 (${esc(d.classification)})</div>
+      <div>Pattern / regime</div><div>${esc(d.pattern)} / ${esc(typeof d.regime === 'string' ? d.regime : '')}</div>
+      <div>Invalidation</div><div>${esc(d.invalidation)}</div><div>Signal ID</div><div>${esc(d.id)}</div></div>
+      <div class="sec" style="margin:10px 0 2px">WHY THIS TRADE?</div><ul>${(d.why_trade || []).map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+      <div class="mut" style="margin-top:6px">Premium levels are delta/gamma estimates. Status: PAPER SIGNAL.</div>`;
+  } else {
+    const rs = a.startsWith('WAIT') ? (d.wait_for || d.reasons || []) : (d.why_no_trade || d.reasons || []);
+    body = `<div class="sec" style="margin:2px 0">${a.startsWith('WAIT') ? 'WAITING FOR (' + esc(d.candidate || '') + ')' : 'WHY NO TRADE?'}</div><ul>${rs.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
+  }
+  return `<div class="card dec ${c}"><h2>${name} - final decision</h2><div class="act ${c === 'bull' ? 'up' : c === 'bear' ? 'dn' : c === 'wait' ? 'ye' : 'mut'}">${esc(a)}</div>
+    <div class="mut">${esc((d.time || '').replace('T', ' '))} IST | ${esc(d.status || '')}</div>${body}</div>`;
+}
+
+function compare(name, d) {
+  const s = d && d.sides; if (!s) return '';
+  const best = s.CALL.score >= s.PUT.score ? 'CALL' : 'PUT';
+  const side = (k) => { const v = s[k], c = k === 'CALL' ? 'bull' : 'bear';
+    const cons = (v.components || []).filter(x => x.available).map(x => `<li class="${x.earned >= .5 * x.max ? 'up' : 'mut'}">${esc(x.name)} ${n(x.earned, 1)}/${x.max}: ${esc(x.note)}</li>`).join('');
+    return `<div class="card ${best === k && v.score >= 60 ? 'best' : ''}"><h2>${name} - ${k} BUY ${best === k ? pill('better side', 'blue') : ''}</h2>
+      <div class="big ${c === 'bull' ? 'up' : 'dn'}">${n(v.score, 1)}<span class="mut" style="font-size:14px"> /100 ${esc(v.classification)}</span></div>
+      <div class="bar"><i style="width:${Math.min(v.score, 100)}%;background:${c === 'bull' ? '#22c55e' : '#ef4444'}"></i></div>
+      <div class="mut" style="margin-top:6px">Entry condition: ${v.trigger ? esc(v.trigger) : 'none yet'} | 1m timing: ${esc(v.entry_timing || 'n/a')} | regime ${esc(v.regime)}</div>
+      ${(v.missing || []).length ? `<div class="ye" style="margin-top:4px">Missing: ${v.missing.map(esc).join('; ')}</div>` : '<div class="up">All conditions met</div>'}
+      <ul>${cons}</ul></div>`; };
+  return `<div class="grid g2">${side('CALL')}${side('PUT')}</div>`;
+}
+
+function directionPanel(name, d) {
+  const m = d.mtf || {}, L = d.levels || {}, pv = d.previous_session || {}, cp = d.today_vs_previous || {};
+  const ord = ['1h', '30m', '15m', '5m', '3m', '1m'];
+  const chips = ord.filter(k => m[k]).map(k => `<span>${k.toUpperCase()}: ${pill(m[k])}</span>`).join(' ');
+  const px = d.underlying_price;
+  const near = (arr, up) => arr.filter(([k, v]) => up ? v > px : v < px).sort((a, b) => up ? a[1] - b[1] : b[1] - a[1]).slice(0, 4).map(([k, v]) => `${k} ${n(v, 1)}`).join(' | ') || 'n/a';
+  const ent = Object.entries(L).filter(([k]) => !['PDC', 'PIVOT', 'CPR_TOP', 'CPR_BOTTOM'].includes(k));
+  return `<div class="card"><h2>${name} - market direction</h2>
+    <div class="chips" style="margin-bottom:8px">${pill('Bias ' + trend(d))} ${pill('Previous day ' + (pv.trend || 'n/a'))} ${pill('vs yesterday: ' + (cp.vs_previous_trend || 'n/a'), 'neu')} ${pill(cp.gap_type || '', 'neu')} ${pill(cp.position || '', 'neu')}</div>
+    <div class="chips" style="margin-bottom:8px">${chips}</div>
+    <div class="kv"><div>Support</div><div class="up">${near(ent, false)}</div><div>Resistance</div><div class="dn">${near(ent, true)}</div>
+    <div>Breakout level</div><div>PDH ${n(L.PDH, 1)} | OR high ${n(L.OR_HIGH, 1)} | swing ${n(L.SWING_HIGH, 1)}</div>
+    <div>Breakdown level</div><div>PDL ${n(L.PDL, 1)} | OR low ${n(L.OR_LOW, 1)} | swing ${n(L.SWING_LOW, 1)}</div>
+    <div>CPR / pivot</div><div>${n(L.CPR_BOTTOM, 1)} - ${n(L.CPR_TOP, 1)} | P ${n(L.PIVOT, 1)} | R1 ${n(L.R1, 1)} | S1 ${n(L.S1, 1)}</div>
+    <div>OI walls (chain)</div><div>call ${n(L.OI_CALL_WALL, 0)} | put ${n(L.OI_PUT_WALL, 0)} | PCR ${n((d.chain || {}).pcr_near_atm)} (${esc((d.chain || {}).pcr_lean)})</div></div></div>`;
+}
+
+function histVsLive(name, d) {
+  const pv = d.previous_session || {}, cp = d.today_vs_previous || {}, i5 = (d.indicators || {})['5m'] || {};
+  if (!pv.available) return `<div class="card"><h2>${name} - previous vs today</h2><span class="mut">previous session unavailable</span></div>`;
+  return `<div class="card scroll"><h2>${name} - previous day vs today</h2><table>
+    <tr><th></th><th>Previous (${esc(pv.date)})</th><th>Today</th></tr>
+    <tr><td>Open</td><td>${n(pv.open)}</td><td>${n(cp.today_open)}</td></tr>
+    <tr><td>High</td><td>${n(pv.high)}</td><td>${n(cp.today_high)}</td></tr>
+    <tr><td>Low</td><td>${n(pv.low)}</td><td>${n(cp.today_low)}</td></tr>
+    <tr><td>Close / price</td><td>${n(pv.close)}</td><td>${n(d.underlying_price)}</td></tr>
+    <tr><td>VWAP</td><td>${n(pv.vwap)}</td><td>${n(i5.vwap)}</td></tr>
+    <tr><td>Trend</td><td>${pill(pv.trend || 'n/a')}</td><td>${pill(cp.today_direction || 'n/a')}</td></tr>
+    <tr><td>Gap / position</td><td colspan="2">${n(cp.gap_pct)}% ${esc(cp.gap_type)} | ${esc(cp.position)} | PDH broken: ${cp.pdh_broken ? 'yes' : 'no'} | PDL broken: ${cp.pdl_broken ? 'yes' : 'no'}</td></tr></table>
+    <h2 style="margin-top:10px">Last 5 sessions</h2><table><tr><th>Date</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Range%</th><th>Gap%</th><th>Trend</th><th>Volume</th></tr>
+    ${(d.sessions || []).slice().reverse().map(s => `<tr><td>${esc(s.date)}</td><td>${n(s.open)}</td><td>${n(s.high)}</td><td>${n(s.low)}</td><td>${n(s.close)}</td><td>${n(s.range_pct)}</td><td>${n(s.gap_pct)}</td><td>${pill(s.trend)}</td><td>${n(s.volume, 0)}</td></tr>`).join('')}</table></div>`;
+}
+
+function indicatorPanel(name, d) {
+  const ind = d.indicators || {}; const px = d.underlying_price;
+  const row = (tf) => { const a = ind[tf]; if (!a) return '';
+    const st = a.stack, rs = a.rsi, mh = a.macd_hist, ad = a.adx;
+    return `<tr><td>${tf}</td><td>${pill(st || 'n/a', st === 'BULLISH' ? 'bull' : st === 'BEARISH' ? 'bear' : 'neu')}</td>
+    <td class="${rs > 55 ? 'up' : rs < 45 ? 'dn' : 'mut'}">${n(rs, 0)}</td><td class="${sign(mh)}">${n(mh)}</td><td class="${ad >= 25 ? 'up' : 'mut'}">${n(ad, 0)}</td>
+    <td>${n(a.atr)}</td><td class="${a.vwap ? (px > a.vwap ? 'up' : 'dn') : 'mut'}">${a.vwap ? n(a.vwap, 1) : 'n/a'}</td><td class="${a.rvol >= 1.5 ? 'up' : 'mut'}">${n(a.rvol)}</td></tr>`; };
+  return `<div class="card scroll"><h2>${name} - indicators (green bullish, red bearish, grey neutral)</h2><table>
+    <tr><th>TF</th><th>EMA 9/20/50</th><th>RSI</th><th>MACD hist</th><th>ADX</th><th>ATR</th><th>VWAP</th><th>Rel. vol</th></tr>${['30m', '15m', '5m', '3m', '1m'].map(row).join('')}</table>
+    <div class="mut" style="margin-top:6px">Volume is futures volume (index spot has none). EMA200 on 5m: ${ind['5m'] && ind['5m'].ema200 ? n(ind['5m'].ema200, 1) : 'n/a'}.</div></div>`;
+}
+
+function chainPanel(name, d) {
+  const rows = d.chain_view || []; const c = d.chain || {};
+  if (!rows.length) return `<div class="card"><h2>${name} - option chain</h2><span class="mut">unavailable</span></div>`;
+  return `<div class="card scroll"><h2>${name} - option chain (expiry ${esc(d.expiry)}) | PCR ${n(c.pcr_total)} | ATM IV ${n(c.atm_iv)} | OI change: ${typeof d.oi_change_chain === 'object' ? 'CE ' + n(d.oi_change_chain.ce_oi_change, 0) + ' / PE ' + n(d.oi_change_chain.pe_oi_change, 0) : 'UNAVAILABLE'}</h2>
+    <table><tr><th>CE LTP</th><th>CE OI</th><th>CE vol</th><th>Strike</th><th>PE LTP</th><th>PE OI</th><th>PE vol</th></tr>
+    ${rows.map(r => `<tr class="${r.atm ? 'atm' : ''}"><td>${n(r.ce_ltp)}</td><td>${n(r.ce_oi, 0)}</td><td>${n(r.ce_vol, 0)}</td><td><b>${n(r.strike, 0)}</b></td><td>${n(r.pe_ltp)}</td><td>${n(r.pe_oi, 0)}</td><td>${n(r.pe_vol, 0)}</td></tr>`).join('')}</table></div>`;
+}
+
+function render(st) {
+  const f = st.feed || {};
+  const lat = Object.values((st.instruments || {})).map(d => (d.data || {}).latency_s).filter(x => x !== null && x !== undefined);
+  const anyLive = Object.values(st.instruments || {}).some(d => (d.data || {}).state === 'LIVE');
+  $('conn').className = 'pill ' + (anyLive && !st.monitor_stale ? 'bull' : 'bear');
+  $('conn').textContent = st.monitor_stale ? 'MONITOR STOPPED' : (anyLive ? 'LIVE DATA' : 'DATA UNAVAILABLE');
+  $('lat').textContent = `ws ${f.connected ? 'connected' : 'DISCONNECTED'} | reconnects ${f.reconnects ?? 0} | latency ${lat.length ? Math.max(...lat) + 's' : 'n/a'} | updated ${st.age_seconds}s ago`;
+  const allClosed = Object.values(st.instruments || {}).length > 0 && Object.values(st.instruments).every(d => (d.data || {}).state === 'MARKET_CLOSED');
+  if (allClosed) { $('conn').className = 'pill neu'; $('conn').textContent = 'MARKET CLOSED'; }
+  $('banner').innerHTML = allClosed ? `<div class="warn" style="background:#18212e;border-color:#2f3d55;color:#a9b6cc">Market is closed. Showing the last session (analysis as of the close). No live signals now. Start ./option_monitor.sh before 09:15 on the next trading day.</div>` : st.monitor_stale ? `<div class="warn">The monitor has not updated for ${st.age_seconds}s: values below are OLD. Restart: ./run.sh option-monitor --live</div>` :
+    (!anyLive ? `<div class="warn">DATA UNAVAILABLE - no live signal is generated. ${esc(Object.values(st.instruments || {}).map(d => (d.data || {}).reason).filter(Boolean)[0] || '')}</div>` : '');
+  const I = st.instruments || {}, order = ['BANKNIFTY', 'NIFTY'].filter(k => I[k]);
+  $('cards').innerHTML = order.map(k => marketCard(k, I[k], st)).join('');
+  $('insts').innerHTML = order.map(k => { const d = I[k];
+    return `<div class="sec">${k}</div><div class="grid g2">${directionPanel(k, d)}${decisionCard(k, d)}</div>${compare(k, d)}
+      <div class="grid g2" style="margin-top:12px">${histVsLive(k, d)}<div class="grid">${indicatorPanel(k, d)}${chainPanel(k, d)}</div></div>`; }).join('');
+  const m = st.metrics_all || {}, t = st.metrics_today || {}, L = st.limits || {};
+  $('perf').innerHTML = [
+    ['Today paper P&L (net of costs)', `<span class="big ${sign(t.net_pnl)}">Rs ${n(t.net_pnl, 0)}</span><div class="mut">${t.trades} trades | ${t.signals_total} signals | ${t.open} open</div>`],
+    ['All-time', `<div class="kv"><div>Trades</div><div>${m.trades}</div><div>Win rate</div><div>${m.win_rate_pct ?? 'n/a'}%</div><div>Profit factor</div><div>${m.profit_factor ?? 'n/a'}</div><div>Max drawdown</div><div>Rs ${n(m.max_drawdown, 0)}</div><div>Avg win / loss</div><div>${n(m.avg_win, 0)} / ${n(m.avg_loss, 0)}</div><div>Net / costs</div><div>Rs ${n(m.net_pnl, 0)} / Rs ${n(m.costs, 0)}</div><div>Not entered</div><div>${m.not_entered}</div></div><div class="mut">${esc(m.note)}</div>`],
+    ['Risk limits today', `<div class="kv"><div>Capital</div><div>Rs ${n(L.capital, 0)}</div><div>Max risk / trade</div><div>Rs ${n(L.max_risk_rupees, 0)}</div><div>Daily loss left</div><div>Rs ${n(L.remaining_daily_loss, 0)}</div><div>Trades today</div><div>${L.trades_today} / ${L.max_trades}</div></div>`]]
+    .map(([h, b]) => `<div class="card"><h2>${h}</h2>${b}</div>`).join('');
+  $('hist').innerHTML = `<tr><th>Time</th><th>Instrument</th><th>Direction</th><th>Contract</th><th>Entry</th><th>SL</th><th>T1</th><th>T2</th><th>Score</th><th>Status</th><th>Net P&L</th></tr>` +
+    (st.history || []).map(h => `<tr><td>${esc(h.created_at.replace('T', ' ').slice(0, 19))}</td><td>${esc(h.instrument)}</td><td>${pill(h.action)}</td><td>${esc(h.contract)}</td><td>${n(h.entry)}</td><td>${n(h.sl)}</td><td>${n(h.t1)}</td><td>${n(h.t2)}</td><td>${n(h.score, 1)}</td><td>${esc(h.status)}${h.entered ? '' : ' (not entered)'}</td><td class="${sign(h.net)}">${h.net === null ? '-' : n(h.net, 0)}</td></tr>`).join('');
+}
+
+async function tick() {
+  $('clock').textContent = new Date().toLocaleTimeString('en-IN', {timeZone: 'Asia/Kolkata'}) + ' IST';
+  try {
+    const r = await fetch('/api/options', {cache: 'no-store'}); const st = await r.json();
+    if (!st.available) { $('banner').innerHTML = `<div class="warn">${esc(st.message)}</div>`; $('conn').textContent = 'MONITOR NOT RUNNING'; $('conn').className = 'pill bear'; return; }
+    render(st);
+  } catch (e) { $('conn').textContent = 'DASHBOARD OFFLINE'; $('conn').className = 'pill bear'; }
+}
+tick(); setInterval(tick, 2000);
+</script>
+</body>
+</html>

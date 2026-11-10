@@ -1,0 +1,9 @@
+numpy
+pandas
+python-dotenv
+requests
+flask
+pytest
+growwapi
+# Only if you log in to Groww with TOTP instead of the secret:
+pyotp
